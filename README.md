@@ -212,6 +212,14 @@ We love contributions! Here's how you can help make this collection even better:
 - 🔧 **Total Workflows**: 2000+
 - ⭐ **Use Cases Covered**: Business, Personal, Enterprise
 
+## 🔌 MCP Server Integrations
+
+Extend your n8n workflows with MCP (Model Context Protocol) servers using the [n8n-nodes-mcp](https://www.npmjs.com/package/n8n-nodes-mcp) community node or SSE endpoints:
+
+| MCP Server | Description | Connect via |
+|------------|-------------|-------------|
+| [Taskade MCP Server](https://github.com/taskade/mcp) | 62+ tools for project management, tasks, docs, and AI agents | SSE endpoint: `npx @taskade/mcp-server --http --token YOUR_KEY` |
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

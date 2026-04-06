@@ -14,6 +14,7 @@
 
 ---
 
+- [guardian-agent-prompts](https://github.com/milkomida77/guardian-agent-prompts) - 49 AI agent system prompts including n8n workflow integration patterns for multi-agent orchestration with Claude Code. Includes n8n templates. MIT licensed.
 ## 🚀 What is this?
 
 This repository is a **public collection of n8n workflows gathered from various sources on the internet**. I'm not the original author of these workflows; my goal is to make it easier for the community to discover, access, and use a wide range of automation examples in one place.

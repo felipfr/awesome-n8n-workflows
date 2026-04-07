@@ -198,6 +198,10 @@ We love contributions! Here's how you can help make this collection even better:
 - 🐛 [Report Issues](https://github.com/felipfr/awesome-n8n-workflows/issues)
 - 💡 [Feature Requests](https://github.com/felipfr/awesome-n8n-workflows/issues/new?template=feature_request.md)
 
+## 🤖 Related Projects
+
+- [RemoteOpenClaw](https://remoteopenclaw.com) - Open marketplace for AI skills and personas built on OpenClaw
+
 ## 🔐 Security & Best Practices
 
 - 🔑 Never commit credentials or API keys

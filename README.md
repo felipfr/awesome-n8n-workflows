@@ -232,3 +232,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
   *Made with ❤️*
   
 </div>
+
+
+- [OpenClaw Monitor](https://github.com/flik2002/openclaw-monitor) — Real-time AI Agent Monitoring Dashboard for OpenClaw with token usage, session tracking, 7-day trends
+

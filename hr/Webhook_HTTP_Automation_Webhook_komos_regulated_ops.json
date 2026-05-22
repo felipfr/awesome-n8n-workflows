@@ -1,0 +1,177 @@
+{
+  "id": "komos-regulated-ops-queue",
+  "name": "Komos regulated browser ops task queue",
+  "tags": [
+    {
+      "name": "HR"
+    },
+    {
+      "name": "Regulated Operations"
+    },
+    {
+      "name": "Browser Automation"
+    }
+  ],
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Queue CRA background screening, FCRA adverse action, insurance eligibility, or banking ops browser work in Komos. Configure KOMOS_API_KEY and KOMOS_TASK_ID as n8n environment variables. More examples: https://github.com/xuanli/komos-regulated-ops-playbooks and https://www.komos.ai/solutions/background-screening.",
+        "height": 240,
+        "width": 360
+      },
+      "id": "b2d4f6f4-0c72-43a7-9153-0d2aa2fc5c61",
+      "name": "Workflow notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "komos-regulated-ops",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "3150a5f6-c710-404f-95cc-e739f0d14816",
+      "name": "Case intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -140,
+        0
+      ],
+      "webhookId": "komos-regulated-ops"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.komos.ai/public/v1/tasks/{{$env.KOMOS_TASK_ID}}/runs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.KOMOS_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"input\": {\n    \"case_id\": $json.body.case_id,\n    \"workflow_type\": $json.body.workflow_type || \"background_screening_portal_check\",\n    \"portal\": $json.body.portal,\n    \"subject\": $json.body.subject,\n    \"return_fields\": $json.body.return_fields || [\"status\", \"evidence_url\", \"exception_reason\"],\n    \"source\": \"n8n\"\n  }\n}",
+        "options": {}
+      },
+      "id": "22563169-d7ee-4b2d-8ce1-0e4eedbc7e6f",
+      "name": "Create Komos run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b0b8e881-45c4-4b32-bd5f-a611cbb39a96",
+              "name": "queued",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "id": "8b586957-d7a3-48d4-88c0-c5dadc6867df",
+              "name": "komos_response",
+              "type": "object",
+              "value": "={{ $json }}"
+            },
+            {
+              "id": "7cf8a837-2718-4517-88f4-338e02cb21ee",
+              "name": "reference",
+              "type": "string",
+              "value": "https://docs.komos.ai/api-reference/introduction"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7937e4e1-13bd-4777-8a01-4ec154cb5d07",
+      "name": "Prepare response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "087268fc-3e53-431c-a1ee-92b8e388d1f7",
+      "name": "Respond to webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Case intake": {
+      "main": [
+        [
+          {
+            "node": "Create Komos run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Komos run": {
+      "main": [
+        [
+          {
+            "node": "Prepare response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare response": {
+      "main": [
+        [
+          {
+            "node": "Respond to webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Queues regulated browser based operations work in Komos from an n8n webhook. Useful for CRA background screening, FCRA adverse action, insurance eligibility verification, and finance operations."
+  },
+  "triggerCount": 1,
+  "updatedAt": "2026-05-22T00:00:00.000Z",
+  "versionId": "komos-regulated-ops-v1"
+}

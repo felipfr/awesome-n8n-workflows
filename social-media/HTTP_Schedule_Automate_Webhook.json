@@ -234,7 +234,7 @@
     },
     {
       "id": "2f3b9b5f-09f0-4fd0-9c65-f6b3be566f59",
-      "name": "TWETTER",
+      "name": "TWITTER",
       "type": "n8n-nodes-base.httpRequest",
       "position": [
         1000,

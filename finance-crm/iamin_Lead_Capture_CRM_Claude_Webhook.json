@@ -1,0 +1,504 @@
+{
+  "name": "SMB Lead Capture to CRM with AI Qualification and Follow-up Email",
+  "nodes": [
+    {
+      "id": "0926e93c-d3f5-46fa-8cfc-cb81cdae3033",
+      "name": "Webhook Tally",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tally-form",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "cc3f2b88-a1ad-4b9b-b6f0-6c86add69035",
+      "name": "Extraire champs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4a7afbfe-a6f2-4b72-a92b-15077438f001",
+              "name": "nom",
+              "type": "string",
+              "value": "={{ $json.body?.nom || $json.body?.name || '' }}"
+            },
+            {
+              "id": "be4493a1-6ecc-4609-8c8d-3a8420cc1dae",
+              "name": "email",
+              "type": "string",
+              "value": "={{ $json.body?.email || '' }}"
+            },
+            {
+              "id": "2cd287e9-3898-41d5-b540-5a9dda5892cf",
+              "name": "message",
+              "type": "string",
+              "value": "={{ $json.body?.message || $json.body?.demande || '' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c3e06ba3-63c3-47b9-9658-0f6f829685b4",
+      "name": "Append log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        640,
+        300
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Pipeline",
+          "mode": "name"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Nom": "={{ $json.nom }}",
+            "Email": "={{ $json.email }}",
+            "Demande": "={{ $json.message }}",
+            "Statut": "Reçu"
+          }
+        }
+      }
+    },
+    {
+      "id": "801c3324-7ea0-46ea-a557-cdced9c3c585",
+      "name": "Préparer prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        840,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1eb52c8a-6b19-428e-b20d-8ee59241cf88",
+              "name": "prompt",
+              "type": "string",
+              "value": "=Analyse cette demande et retourne UNIQUEMENT un JSON: {\"dans_perimetre\": true/false, \"score\": 1-10, \"resume\": \"...\"}. Périmètre: consulting IA pour PME. Demande: {{ $('Extraire champs').item.json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "1bbb87ca-357f-4ec1-ac1e-d5c294c78520",
+      "name": "Claude — Qualification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1040,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\"model\":\"claude-haiku-4-5-20251001\",\"max_tokens\":512,\"messages\":[{\"role\":\"user\",\"content\":{{ JSON.stringify($json.prompt) }}}]}",
+        "options": {}
+      }
+    },
+    {
+      "id": "d714edca-91c1-465f-be7d-eda8b906a78e",
+      "name": "Parser JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const txt = $json.content[0].text;\nlet parsed;\ntry { parsed = JSON.parse(txt); }\ncatch (e) {\n  const m = txt.match(/\\{[\\s\\S]*\\}/);\n  parsed = m ? JSON.parse(m[0]) : { dans_perimetre: false, score: 0, resume: txt };\n}\nconst e = $('Extraire champs').item.json;\nreturn [{ json: { dans_perimetre: parsed.dans_perimetre === true, score: parsed.score, resume: parsed.resume, nom: e.nom, email: e.email, message: e.message } }];"
+      }
+    },
+    {
+      "id": "941e9f37-9caa-4e71-b3ce-b9decc6a381b",
+      "name": "Switch périmètre",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1440,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.dans_perimetre }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              },
+              "outputKey": "dans_perimetre"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.dans_perimetre }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              },
+              "outputKey": "hors_perimetre"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "045ce797-bef7-4aac-9d78-ec784f08d2fb",
+      "name": "Préparer réponse",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        1680,
+        160
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aa5f2dad-3448-4658-97a3-b88cdf1b7e61",
+              "name": "prompt",
+              "type": "string",
+              "value": "=Rédige une réponse professionnelle et chaleureuse à cette demande de consulting IA: {{ $json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "168d8474-1dee-4f12-aff9-06cb798719e8",
+      "name": "Claude — Réponse",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1880,
+        160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\"model\":\"claude-haiku-4-5-20251001\",\"max_tokens\":1024,\"messages\":[{\"role\":\"user\",\"content\":{{ JSON.stringify($json.prompt) }}}]}",
+        "options": {}
+      }
+    },
+    {
+      "id": "54e433db-fc61-49ce-ad28-2138cef71a02",
+      "name": "Envoi réponse",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        160
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Parser JSON').item.json.email }}",
+        "subject": "=Votre demande de consulting IA",
+        "emailType": "html",
+        "message": "<p>{{ $json.content[0].text }}</p>",
+        "options": {}
+      }
+    },
+    {
+      "id": "669ebaed-16f3-4d6f-b003-70311d2de52e",
+      "name": "Statut Répondu",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        2280,
+        160
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Pipeline",
+          "mode": "name"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Email": "={{ $('Parser JSON').item.json.email }}",
+            "Score": "={{ $('Parser JSON').item.json.score }}",
+            "Statut": "Répondu"
+          },
+          "matchingColumns": [
+            "Email"
+          ]
+        }
+      }
+    },
+    {
+      "id": "edbd3d76-3f86-4e19-b7f1-994598db76a0",
+      "name": "Déclinaison",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        440
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Parser JSON').item.json.email }}",
+        "subject": "=Votre demande",
+        "emailType": "html",
+        "message": "<p>Bonjour {{ $('Parser JSON').item.json.nom }},</p><p>Merci pour votre demande. Après analyse, votre projet ne correspond pas à notre périmètre actuel.</p>",
+        "options": {}
+      }
+    },
+    {
+      "id": "8168ff5c-2fb8-4bae-b797-5fbfe4b05977",
+      "name": "Statut Hors périmètre",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1880,
+        440
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Pipeline",
+          "mode": "name"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Email": "={{ $('Parser JSON').item.json.email }}",
+            "Score": "={{ $('Parser JSON').item.json.score }}",
+            "Statut": "Hors périmètre"
+          },
+          "matchingColumns": [
+            "Email"
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Tally": {
+      "main": [
+        [
+          {
+            "node": "Extraire champs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire champs": {
+      "main": [
+        [
+          {
+            "node": "Append log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append log": {
+      "main": [
+        [
+          {
+            "node": "Préparer prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude — Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude — Qualification": {
+      "main": [
+        [
+          {
+            "node": "Parser JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser JSON": {
+      "main": [
+        [
+          {
+            "node": "Switch périmètre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch périmètre": {
+      "main": [
+        [
+          {
+            "node": "Préparer réponse",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Déclinaison",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer réponse": {
+      "main": [
+        [
+          {
+            "node": "Claude — Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude — Réponse": {
+      "main": [
+        [
+          {
+            "node": "Envoi réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoi réponse": {
+      "main": [
+        [
+          {
+            "node": "Statut Répondu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Déclinaison": {
+      "main": [
+        [
+          {
+            "node": "Statut Hors périmètre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

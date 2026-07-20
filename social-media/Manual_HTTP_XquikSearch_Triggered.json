@@ -1,0 +1,163 @@
+{
+  "name": "Search X posts with Xquik",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "8b3c70fe-f10b-4f7c-9fa7-d6f6f90f0e01",
+      "name": "On clicking 'execute'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1b64db9e-3032-4891-bd60-05f640f914b0",
+              "name": "query",
+              "value": "n8n automation",
+              "type": "string"
+            },
+            {
+              "id": "1f8e42ac-3efb-4026-adde-3d6f4f74e9f2",
+              "name": "limit",
+              "value": 10,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "81154517-c2e0-47b6-b70a-e93e3d376ff2",
+      "name": "Set search parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://xquik.com/api/v1/x/tweets/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json.limit }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.XQUIK_API_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "be569443-c727-4c9d-9f9e-273198d8ee16",
+      "name": "Search Xquik posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "notes": "Set XQUIK_API_KEY in the n8n environment before running. If environment access is disabled, replace the expression with an n8n Header Auth credential."
+    },
+    {
+      "parameters": {
+        "jsCode": "const candidates = [$json.data, $json.tweets, $json.results, $json.items];\nconst tweets = candidates.find((value) => Array.isArray(value));\n\nif (!tweets) {\n  return [{ json: { rawResponse: $json } }];\n}\n\nreturn tweets.map((tweet) => ({\n  json: {\n    id: tweet.id ?? tweet.tweetId ?? tweet.restId,\n    text: tweet.text ?? tweet.fullText,\n    url: tweet.url,\n    author: tweet.author?.username ?? tweet.username ?? tweet.screenName,\n    likeCount: tweet.likeCount ?? tweet.favoriteCount,\n    retweetCount: tweet.retweetCount,\n    replyCount: tweet.replyCount\n  }\n}));"
+      },
+      "id": "bc5f5761-72ed-464b-913f-2ad165281832",
+      "name": "Normalize tweet rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        300
+      ],
+      "notes": "Emits one n8n item per post for sheets, alerts, or dashboards."
+    },
+    {
+      "parameters": {
+        "content": "## Xquik X search\n\nSet `XQUIK_API_KEY` in your n8n environment. If `$env` access is disabled, replace the header expression with an n8n Header Auth credential. Change `query` and `limit`, then run manually. The last node emits one item per post for downstream steps.\n\n[API documentation](https://docs.xquik.com/api-reference/overview)\n\nXquik is a closed-source hosted service. Xquik is an independent third-party service. Not affiliated with X Corp. \"Twitter\" and \"X\" are trademarks of X Corp.",
+        "height": 380,
+        "width": 360
+      },
+      "id": "a52d08f7-2d31-4c16-aee0-78d4921a5e75",
+      "name": "Setup note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        420,
+        20
+      ]
+    }
+  ],
+  "connections": {
+    "On clicking 'execute'": {
+      "main": [
+        [
+          {
+            "node": "Set search parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set search parameters": {
+      "main": [
+        [
+          {
+            "node": "Search Xquik posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Xquik posts": {
+      "main": [
+        [
+          {
+            "node": "Normalize tweet rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "e56f46ca-46b2-4b3e-8361-f76bc0b2abf8",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "xquik-search-template",
+  "tags": [
+    {
+      "name": "social-media"
+    },
+    {
+      "name": "xquik"
+    }
+  ]
+}

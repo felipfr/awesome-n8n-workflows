@@ -1,0 +1,338 @@
+{
+  "name": "Blog RSS to native social posts on every network with PostWire",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Turn every new blog post into a native post on every network\n\nYour RSS feed is already the list of things you want to talk about. This workflow watches it, and the\nmoment something new appears it writes a **different** post for each network and queues them all -\nLinkedIn gets a paragraph, X gets a line, Instagram gets the image.\n\n@[youtube](Tcak2lt2k3s)\n\n### What you need\n- A **PostWire** account (the free tier is enough) - https://postwire.io - and an API key from *API & MCP*.\n- Your networks connected inside PostWire, once. n8n never sees the social tokens.\n- Any RSS feed: your blog, your newsletter, a Ghost / WordPress / Substack site.\n\n### Setup, in order\n1. Create a **Header Auth** credential: name `Authorization`, value `Bearer pw_live_...`\n2. Put your own feed URL in the RSS trigger.\n3. In *Decide where it goes*, edit the `platforms` list to the networks you actually connected.\n4. Run it once by hand. The queue inside PostWire shows exactly what was scheduled.\n\n### Why this is not \"post the link everywhere\"\nNetworks bury the same text pasted twice, and half of them reject it outright. `/api/generate` writes\neach caption against that network's real limits - 280 characters versus 3,000, hashtags where they\nhelp, links where they are allowed. `/api/schedule` then refuses anything that would fail (Instagram\nwithout an image, say) *before* it sits in the queue pretending to be fine.",
+        "height": 640,
+        "width": 500,
+        "color": 4
+      },
+      "id": "Note: overview",
+      "name": "Note: overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 1. Watch the feed\n\nChecks once an hour. n8n remembers what it has already seen, so an article is only ever picked up once.\n\nSwap in any RSS/Atom URL - most blogs expose one at `/rss` or `/feed`.",
+        "height": 210,
+        "width": 320,
+        "color": 7
+      },
+      "id": "Note: the feed",
+      "name": "Note: the feed",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -430
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 2. Only genuinely new items\n\nThe first run of an RSS trigger can return the entire archive. This drops anything published more than two days ago, so you don't wake up to forty queued posts.",
+        "height": 220,
+        "width": 320,
+        "color": 7
+      },
+      "id": "Note: skip the backlog",
+      "name": "Note: skip the backlog",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        320,
+        -430
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 3. The image decides the networks\n\nInstagram needs a picture. If the article has none, Instagram is dropped from the list and everything else still goes out - one missing asset should never block the whole post.",
+        "height": 230,
+        "width": 330,
+        "color": 7
+      },
+      "id": "Note: media decides",
+      "name": "Note: media decides",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -430
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 4. One draft in, many captions out\n\n`/api/generate` returns a caption per network, written to that network's own limits and tone. The article title and summary are the prompt.",
+        "height": 210,
+        "width": 320,
+        "color": 7
+      },
+      "id": "Note: one caption per network",
+      "name": "Note: one caption per network",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        -430
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 5. Queued, not blasted\n\nIt is scheduled 30 minutes out, so there is time to open PostWire and edit any caption first. Remove `run_at` to publish immediately instead.",
+        "height": 210,
+        "width": 320,
+        "color": 7
+      },
+      "id": "Note: the queue",
+      "name": "Note: the queue",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        -430
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "feedUrl": "https://example.com/blog/rss.xml",
+        "options": {}
+      },
+      "id": "rss",
+      "name": "Watch the blog feed",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fresh",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ new Date($json.isoDate || $json.pubDate).getTime() > Date.now() - 2 * 24 * 60 * 60 * 1000 }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "fresh",
+      "name": "Published in the last two days",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        320,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "link",
+              "value": "={{ $json.link }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "summary",
+              "value": "={{ ($json.contentSnippet || $json.content || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 600) }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "photo_url",
+              "value": "={{ $json.enclosure?.url || ($json.content || '').match(/<img[^>]+src=[\"']([^\"']+)/)?.[1] || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "platforms",
+              "value": "={{ ['linkedin', 'x', 'bluesky', 'mastodon', 'instagram'] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "shape",
+      "name": "Decide where it goes",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        680,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "platforms",
+              "value": "={{ $json.photo_url ? $json.platforms : $json.platforms.filter(p => p !== 'instagram') }}",
+              "type": "array"
+            },
+            {
+              "id": "b2",
+              "name": "prompt",
+              "value": "={{ 'New article: ' + $json.title + '\\n\\n' + $json.summary + '\\n\\nLink: ' + $json.link }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "media",
+      "name": "Drop Instagram if there is no image",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1040,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://postwire.io/api/generate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.prompt, platforms: $json.platforms, media_url: $json.photo_url || undefined }) }}",
+        "options": {}
+      },
+      "id": "gen",
+      "name": "Write a caption per network",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://postwire.io/api/schedule",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(), platforms: $('Drop Instagram if there is no image').item.json.platforms, label: $('Decide where it goes').item.json.title.slice(0, 60), photo_url: $('Decide where it goes').item.json.photo_url || undefined, per_platform: $json.drafts }) }}",
+        "options": {}
+      },
+      "id": "sched",
+      "name": "Queue it for 30 minutes from now",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        -160
+      ]
+    }
+  ],
+  "connections": {
+    "Watch the blog feed": {
+      "main": [
+        [
+          {
+            "node": "Published in the last two days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Published in the last two days": {
+      "main": [
+        [
+          {
+            "node": "Decide where it goes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide where it goes": {
+      "main": [
+        [
+          {
+            "node": "Drop Instagram if there is no image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drop Instagram if there is no image": {
+      "main": [
+        [
+          {
+            "node": "Write a caption per network",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write a caption per network": {
+      "main": [
+        [
+          {
+            "node": "Queue it for 30 minutes from now",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -86,6 +86,7 @@ All credit for the creation of each workflow belongs to their respective authors
 - Social media monitoring
 - Lead generation
 - Campaign automation
+- [Arcmira: YouTube Transcript Search](social-media/Manual_HTTPRequest_YouTubeTranscriptShortlist_Triggered.md) - Find timestamped passages with source links and coverage notes.
 
 </details>
 

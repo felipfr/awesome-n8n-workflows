@@ -1,0 +1,140 @@
+{
+  "name": "Arcmira - YouTube transcript source shortlist",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "52eaeffb-5f37-4971-ae16-a6eaae1c667c",
+      "name": "Manual trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { topic: \"creativity\", after: \"2026-08-01\", before: \"2026-09-01\" } }];\n"
+      },
+      "id": "cfbbbdff-f737-49aa-9796-136c4048e47f",
+      "name": "Search input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "notes": "Edit one topic and an explicit publication-date window. The before date is exclusive. Plan freshness and date-window limits apply.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.arcmira.com/v1/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.topic }}"
+            },
+            {
+              "name": "after",
+              "value": "={{ $json.after }}"
+            },
+            {
+              "name": "before",
+              "value": "={{ $json.before }}"
+            },
+            {
+              "name": "limit",
+              "value": "3"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "c7e65a41-8f7a-40c1-aef2-1ba8b0786aae",
+      "name": "Search Arcmira",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ],
+      "credentials": {},
+      "retryOnFail": false,
+      "notes": "Choose your own HTTP Bearer Auth credential. Token placeholder: YOUR_ARCMIRA_API_KEY. Never paste the token into workflow fields. One GET /v1/search request, fixed limit 3, no pagination or transcript retrieval. Errors stop the workflow.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst requested = $('Search input').first().json;\nif (!Array.isArray(response.chunks)) throw new Error('Expected a search response with chunks. Inspect the HTTP Request error or response.');\nif (response.chunks.length > 3) throw new Error('Unexpected result count above the configured three-passage limit.');\nreturn [{ json: {\n  query: response.query,\n  requested_window: { after: requested.after, before: requested.before },\n  applied_window: response.window,\n  returned: response.returned,\n  partial: response.partial ?? false,\n  failed_batches: response.failed_batches ?? 0,\n  as_of: response.as_of,\n  search_index: response.search_index,\n  note: response.note,\n  access: response.access ?? null,\n  unlock: response.unlock ?? null,\n  candidates: response.chunks.map((c, index) => ({\n    ordinal: index + 1,\n    video_id: c.video_id,\n    title: c.video_title ?? null,\n    channel: c.channel_name ?? null,\n    published_at: c.published_at,\n    passage: c.text,\n    passage_start_seconds: c.start_seconds,\n    source_watch_url: c.watch_url,\n    arcmira_url: c.watch_url.startsWith('/') ? 'https://arcmira.com' + c.watch_url : c.watch_url,\n    original_source_url: 'https://www.youtube.com/watch?v=' + encodeURIComponent(c.video_id)\n      + (c.start_seconds === null ? '' : '&t=' + c.start_seconds + 's'),\n    transcript_source: c.source,\n    transcript_source_label: c.source_label ?? null,\n    speaker_names: c.speakers ?? [],\n    speaker_entities: c.speakers_by ?? [],\n    cut_start_seconds: null,\n    cut_end_seconds: null,\n    playback_verified: false,\n    speaker_identity_verified: false,\n    reuse_permission: 'not established',\n    selection: 'unselected candidate'\n  }))\n} }];\n"
+      },
+      "id": "74cfb041-bddd-4cad-904e-d7bb5f453fa0",
+      "name": "Build source shortlist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "notes": "Candidate passages only. Preserve applied window, source provenance and coverage notes. Review playback, identity and cut boundaries before editing.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Manual trigger": {
+      "main": [
+        [
+          {
+            "node": "Search input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search input": {
+      "main": [
+        [
+          {
+            "node": "Search Arcmira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Arcmira": {
+      "main": [
+        [
+          {
+            "node": "Build source shortlist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC"
+  }
+}

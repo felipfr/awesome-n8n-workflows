@@ -1,0 +1,198 @@
+{
+  "name": "Yandex Contacts: list and search",
+  "nodes": [
+    {
+      "id": "22e83571-0f1b-4c4a-9fab-fa03a279c307",
+      "name": "Contacts request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "yandex-contacts",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-watchdog-token'] === 'REPLACE_WITH_YOUR_TOKEN' }}"
+        }
+      }
+    },
+    {
+      "id": "aa670f99-22f8-4b46-9171-2e07510f719b",
+      "name": "List cards",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "PROPFIND",
+        "url": "https://carddav.yandex.ru/addressbook/YOUR-LOGIN%40yandex.ru/1/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Depth",
+              "value": "1"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/xml; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/xml; charset=utf-8",
+        "body": "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:getetag/><d:getcontenttype/></d:prop></d:propfind>",
+        "options": {
+          "webdavMethods": true,
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "8fa19c22-9d3b-419d-b216-1fb916054ca7",
+      "name": "Build multiget query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const xml = String(($json && $json.data) || \"\");\nconst book = \"/addressbook/YOUR-LOGIN%40yandex.ru/1/\";\nfunction trimSlash(value) { let out = value; while (out.endsWith(\"/\")) out = out.slice(0, -1); return out; }\nconst hrefs = [];\nconst lower = xml.toLowerCase();\nlet cursor = 0;\nwhile (true) {\n  const start = lower.indexOf(\"href\", cursor);\n  if (start < 0) break;\n  const openEnd = xml.indexOf(\">\", start);\n  if (openEnd < 0) break;\n  const closeStart = xml.indexOf(\"<\", openEnd + 1);\n  if (closeStart < 0) break;\n  const value = xml.slice(openEnd + 1, closeStart).trim();\n  if (value) hrefs.push(value);\n  cursor = closeStart + 1;\n}\nconst cards = hrefs.filter((href) => href.indexOf(\"/addressbook/\") >= 0 && trimSlash(href) !== trimSlash(book));\nconst parts = cards.map((href) => \"<d:href>\" + href + \"</d:href>\").join(\"\");\nconst multiget = '<c:addressbook-multiget xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:carddav\">' + '<d:prop><d:getetag/><c:address-data/></d:prop>' + parts + \"</c:addressbook-multiget>\";\nreturn [{ json: { multiget: multiget, cardCount: cards.length, listStatus: Number(($json && $json.statusCode) || 0) } }];"
+      }
+    },
+    {
+      "id": "8019b166-bf4f-43a9-87f4-bc8e190aff1d",
+      "name": "Fetch cards",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "REPORT",
+        "url": "https://carddav.yandex.ru/addressbook/YOUR-LOGIN%40yandex.ru/1/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Depth",
+              "value": "1"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/xml; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/xml; charset=utf-8",
+        "body": "={{ $json.multiget }}",
+        "options": {
+          "webdavMethods": true,
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "850dce2e-3349-4806-918e-eeaf51e8d5a2",
+      "name": "Parse response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body = ($(\"Contacts request\").first().json.body) || {};\nconst list = $(\"Build multiget query\").first().json || {};\nconst xml = String(($json && $json.data) || \"\");\n\nfunction linesOf(block) {\n  const out = [];\n  for (const piece of block.split(\"\\n\")) {\n    let line = piece;\n    if (line.length && line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);\n    if (line.length && (line.startsWith(\" \") || line.charCodeAt(0) === 9) && out.length) {\n      out[out.length - 1] += line.slice(1);\n    } else if (line.length) {\n      out.push(line);\n    }\n  }\n  return out;\n}\n\nconst contacts = [];\nfor (const chunk of xml.split(\"BEGIN:VCARD\").slice(1)) {\n  const item = { name: \"\", emails: [], phones: [], organization: \"\" };\n  for (const line of linesOf(chunk.split(\"END:VCARD\")[0])) {\n    const cut = line.indexOf(\":\");\n    if (cut < 0) continue;\n    const key = line.slice(0, cut).split(\";\")[0].toUpperCase();\n    const value = line.slice(cut + 1).trim();\n    if (!value) continue;\n    if (key === \"FN\" && !item.name) item.name = value;\n    else if (key === \"N\" && !item.name) {\n      const parts = value.split(\";\");\n      const built = [parts[1], parts[0]].filter((part) => part).join(\" \");\n      if (built) item.name = built;\n    }\n    else if (key === \"EMAIL\") item.emails.push(value);\n    else if (key === \"TEL\") item.phones.push(value);\n    else if (key === \"ORG\") item.organization = value.split(\";\").join(\" \");\n    else if (key === \"TITLE\") item.title = value;\n  }\n  if (item.name || item.emails.length || item.phones.length) contacts.push(item);\n}\n\ncontacts.sort((left, right) => String(left.name || left.emails[0] || \"\").localeCompare(String(right.name || right.emails[0] || \"\"), \"ru\"));\n\nconst action = String(body.action || \"list\").toLowerCase();\nconst query = String(body.query || \"\").trim();\nconst limit = Math.min(Math.max(Number(body.limit || 20), 1), 200);\n\nlet selected = contacts;\nif (action === \"search\" && query) {\n  const needle = query.toLowerCase();\n  selected = contacts.filter((item) => {\n    const hay = [item.name, item.organization, item.title].concat(item.emails, item.phones);\n    return hay.some((value) => String(value || \"\").toLowerCase().indexOf(needle) >= 0);\n  });\n}\n\nconst shown = selected.slice(0, limit).map((item) => {\n  const card = { name: item.name, emails: item.emails.slice(0, 3), phones: item.phones.slice(0, 3) };\n  if (item.organization) card.organization = item.organization;\n  return card;\n});\n\nconst reportStatus = Number(($json && $json.statusCode) || 0);\nlet note = \"response received\";\nif (reportStatus === 401) note = \"access denied — check the app password for contacts\";\nelse if (reportStatus === 403) note = \"address book rejected the request\";\nelse if (reportStatus !== 207) note = \"code \" + reportStatus;\n\nreturn [{ json: {\n  action: action,\n  query: query,\n  total: contacts.length,\n  matched: selected.length,\n  returned: shown.length,\n  truncated: selected.length > shown.length,\n  listStatus: Number(list.listStatus || 0),\n  reportStatus: reportStatus,\n  note: note,\n  contacts: shown\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Contacts request": {
+      "main": [
+        [
+          {
+            "node": "List cards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List cards": {
+      "main": [
+        [
+          {
+            "node": "Build multiget query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build multiget query": {
+      "main": [
+        [
+          {
+            "node": "Fetch cards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch cards": {
+      "main": [
+        [
+          {
+            "node": "Parse response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "active": false,
+  "pinData": {}
+}

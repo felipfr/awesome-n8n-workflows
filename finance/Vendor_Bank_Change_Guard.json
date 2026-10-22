@@ -1,0 +1,2005 @@
+{
+  "name": "Verify vendor bank detail changes with Google Sheets, email and Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "GUARDRAIL - vendor bank-detail change guard\n\nWho it's for: finance and accounts-payable teams that receive vendor payment-detail changes by email.\n\nHow it works: every request is held in a pending state. The IBAN is validated (format, mod-97 checksum and country match), the vendor is matched against your sheet and the request is scored for risk. A single-use approval link goes only to the finance address already on file, never to the sender. Approval is refused until the cooling period ends (48 h, or 72 h for higher risk); replays, unknown and expired links are denied and logged. A daily watchdog reminds at 24 h, escalates at 48 h and closes the request as expired at 72 h, with one digest instead of per-vendor noise. Every attempt lands in an append-only audit tab.\n\nHow to set up: create the Vendors, BankChanges and Audit tabs (headers in the Setup note), set base_url and finance_lead in the three Config nodes, connect the Google Sheets, SMTP and Telegram credentials, then activate.\n\nRequirements: Google Sheets, an SMTP account, a Telegram bot and a public n8n URL. No paid services.\n\nHow to customize: change thresholds, cooling periods and token TTL in the Config nodes; add or remove form fields in the trigger.",
+        "height": 420,
+        "width": 400,
+        "color": 5
+      },
+      "id": "note-overview",
+      "name": "overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "SETUP CHECKLIST (10 minutes)\n\n1. Create one Google Sheet with three tabs and these exact headers:\n   Vendors: vendor_code | vendor_name | country | vendor_domain | finance_email | finance_lead_email | status\n   BankChanges: change_id | vendor_code | vendor_name | requested_by | finance_email | finance_lead_email |\n     new_iban | new_iban_masked | iban_hash | bank_country | risk | risk_flags | status | token_hash |\n     created_at | cooling_until | expires_at | last_stage | last_action_at | decided_by | note\n   Audit: at | event | change_id | actor | detail\n2. Fill Vendors with the finance address you trust TODAY (not the one in the request).\n3. Open Config (intake), Config (approval) and Config (watchdog) and set base_url,\n   company and finance_lead. Keep the three copies identical.\n4. Connect Google Sheets, SMTP and Telegram credentials on the red nodes.\n5. Activate. The form lives at /form/vendor-bank-change.\n\nThe sheet can be the source of truth: a human can read it, and status is the state machine.\nRestrict access: it holds bank details (treat it as confidential data).",
+        "height": 400,
+        "width": 460,
+        "color": 6
+      },
+      "id": "note-setup",
+      "name": "setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        760,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "PART A - intake\n\nValidate first (IBAN mod-97, country match, requester email), then match the vendor and\nscore risk. Nothing is emailed to the request address: the verification link goes only to\nthe finance contact already on file.\n\nRisk rules (sum, capped at 100): unknown vendor 100 | inactive 40 | bank country vs IBAN 30 |\nrequester domain 25 | free mailbox 15 | second change in 90 days 15 | 2+ changes 30.\n>= 70 goes to manual review. 40+ uses the long cooling period.",
+        "height": 240,
+        "width": 420,
+        "color": 7
+      },
+      "id": "note-intake-note",
+      "name": "intake-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        120,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "PART B - one-click decision\n\nThe link carries a random token. Only its SHA-256 hash is stored, so a leaked sheet\ncannot be used to approve anything. Each token works once: a second click returns\n\"Already handled\" and changes nothing (idempotent).\n\nApprove before the cooling period ends is refused and the state is untouched.\nExpired or unknown tokens are logged in Audit as LINK_DENIED with HTTP 400.",
+        "height": 220,
+        "width": 420,
+        "color": 7
+      },
+      "id": "note-decision-note",
+      "name": "decision-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        120,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "content": "PART C - watchdog\n\nRuns daily at 07:30. Stage 1 (24 h) reminds finance, stage 2 (48 h) escalates to the\nfinance lead, stage 3 (72 h) closes the hold as EXPIRED and tells the requester.\nlast_stage in the sheet guarantees a stage is never sent twice.\n\nLinks are never re-sent - the email says to use the original one. That is deliberate:\nre-sending a link turns a reminder into a second attack surface.",
+        "height": 220,
+        "width": 420,
+        "color": 7
+      },
+      "id": "note-watchdog-note",
+      "name": "watchdog-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        120,
+        1600
+      ]
+    },
+    {
+      "parameters": {
+        "content": "AUDIT\n\nAppend-only rows for anything refused or escalated: rejected submissions, duplicate\nrequests, manual reviews and denied links. Approved and rejected decisions also stamp\ndecided_by and last_action_at on the change row.",
+        "height": 180,
+        "width": 340,
+        "color": 7
+      },
+      "id": "note-audit-note",
+      "name": "audit-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        1120
+      ]
+    },
+    {
+      "parameters": {
+        "formTitle": "Vendor bank details change request",
+        "formDescription": "Use this form to change the bank account we pay you on. Requests are verified with the finance contact we already have on file and are held for a cooling period. Never send bank details by email.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Vendor code",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Requested by (email)",
+              "fieldType": "email",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "New account holder",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "New IBAN",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "New bank country",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Reason",
+              "fieldType": "textarea",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "path": "vendor-bank-change",
+          "appendAttribution": false,
+          "formSubmittedText": "Request received. It is on hold until our finance team verifies it with the contact we already have on file. Nothing has changed yet."
+        }
+      },
+      "id": "guard-form",
+      "name": "Bank change form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        -200,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "Config (intake)-0",
+              "name": "base_url",
+              "value": "https://your-n8n.example.com",
+              "type": "string"
+            },
+            {
+              "id": "Config (intake)-1",
+              "name": "company",
+              "value": "Your company",
+              "type": "string"
+            },
+            {
+              "id": "Config (intake)-2",
+              "name": "finance_lead",
+              "value": "finance-lead@example.com",
+              "type": "string"
+            },
+            {
+              "id": "Config (intake)-3",
+              "name": "cooling_hours_standard",
+              "value": 48,
+              "type": "number"
+            },
+            {
+              "id": "Config (intake)-4",
+              "name": "cooling_hours_high",
+              "value": 72,
+              "type": "number"
+            },
+            {
+              "id": "Config (intake)-5",
+              "name": "link_ttl_hours",
+              "value": 168,
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "set-Config (intake)",
+      "name": "Config (intake)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        20,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GuardRail - step 1: normalise the submission and validate it before anything else.\nconst NL = String.fromCharCode(10);\nconst raw = $json;\nfunction pick(keys) {\n  for (const k of keys) {\n    if (raw[k] !== undefined && raw[k] !== null && String(raw[k]).trim() !== '') return raw[k];\n  }\n  return '';\n}\nfunction mod97(s) {\n  const rearr = s.slice(4) + s.slice(0, 4);\n  let rem = 0;\n  for (let i = 0; i < rearr.length; i++) {\n    const ch = rearr[i];\n    const val = ch >= 'A' && ch <= 'Z' ? String(ch.charCodeAt(0) - 55) : ch;\n    for (let j = 0; j < val.length; j++) rem = (rem * 10 + Number(val[j])) % 97;\n  }\n  return rem;\n}\nconst vendor_code = String(pick(['Vendor code', 'vendor_code'])).trim().toUpperCase();\nconst requested_by = String(pick(['Requested by (email)', 'requested_by'])).trim().toLowerCase();\nconst account_holder = String(pick(['New account holder', 'new_account_holder'])).trim();\nconst iban = String(pick(['New IBAN', 'new_iban'])).replace(/[\\s-]+/g, '').toUpperCase();\nconst bank_country = String(pick(['New bank country', 'new_bank_country'])).trim().toUpperCase();\nconst reason = String(pick(['Reason', 'reason'])).trim();\n\nconst errors = [];\nif (!vendor_code) errors.push('vendor code is missing');\nelse if (!/^[A-Z0-9_.-]{2,32}$/.test(vendor_code)) errors.push('vendor code has invalid characters');\nif (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$/.test(requested_by)) errors.push('requester email is not valid');\nif (account_holder.length < 2) errors.push('account holder is missing');\nif (reason.length < 10) errors.push('reason must be at least 10 characters');\nif (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(iban)) errors.push('IBAN format is invalid');\nelse if (mod97(iban) !== 1) errors.push('IBAN checksum does not match (likely a typo)');\nif (!/^[A-Z]{2}$/.test(bank_country)) errors.push('bank country must be a 2-letter ISO code');\nif (iban && bank_country && iban.slice(0, 2) !== bank_country) errors.push('bank country does not match the IBAN prefix');\n\nconst now = new Date();\nconst at = now.toISOString().slice(0, 16).replace('T', ' ');\nreturn [{\n  json: {\n    vendor_code: vendor_code,\n    requested_by: requested_by,\n    account_holder: account_holder,\n    new_iban: iban,\n    new_iban_masked: iban ? iban.slice(0, 4) + ' **** ' + iban.slice(-4) : '',\n    iban_country: iban ? iban.slice(0, 2) : '',\n    bank_country: bank_country,\n    reason: reason,\n    submitted_at: now.toISOString(),\n    valid: errors.length === 0,\n    errors: errors.join('; '),\n    event: 'SUBMISSION_REJECTED',\n    change_id: '',\n    actor: requested_by || 'unknown',\n    detail: errors.join('; '),\n    at: at\n  }\n}];"
+      },
+      "id": "code-Normalise and validate",
+      "name": "Normalise and validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.new_iban }}",
+        "binaryData": false,
+        "dataPropertyName": "iban_hash",
+        "encoding": "hex"
+      },
+      "id": "crypto-Hash IBAN",
+      "name": "Hash IBAN",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        460,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Valid submission?",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Valid submission?",
+      "name": "Valid submission?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "sheets-Read vendors",
+      "name": "Read vendors",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "sheets-Read change history",
+      "name": "Read change history",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GuardRail - step 2: match the vendor, score the risk and decide the route.\n// Routes: pending (send verification link) | duplicate (ignore, already open) | manual (never auto-approvable)\nconst cfg = $('Config (intake)').first().json;\nconst item = $json;\nconst vendors = $('Read vendors').all().map(function (i) { return i.json; });\nconst history = $('Read change history').all().map(function (i) { return i.json; });\nfunction norm(v) { return String(v === null || v === undefined ? '' : v).trim().toLowerCase(); }\nfunction daysAgo(v) {\n  const t = new Date(v).getTime();\n  return isFinite(t) ? (Date.now() - t) / 86400000 : 9999;\n}\nconst FREE_MAIL = ['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'icloud.com', 'aol.com', 'proton.me', 'gmx.com'];\nconst vendor = vendors.find(function (v) { return norm(v.vendor_code) === norm(item.vendor_code); });\nconst flags = [];\nlet risk = 0;\n\nif (!vendor) {\n  flags.push('UNKNOWN_VENDOR');\n  risk = 100;\n} else {\n  if (norm(vendor.status) && norm(vendor.status) !== 'active') { flags.push('VENDOR_NOT_ACTIVE'); risk += 40; }\n  if (vendor.country && item.iban_country && norm(vendor.country) !== norm(item.iban_country)) { flags.push('BANK_COUNTRY_MISMATCH'); risk += 30; }\n  const requesterDomain = item.requested_by.split('@')[1] || '';\n  if (vendor.vendor_domain && norm(vendor.vendor_domain) !== norm(requesterDomain)) { flags.push('REQUESTER_DOMAIN_MISMATCH'); risk += 25; }\n  if (FREE_MAIL.indexOf(norm(requesterDomain)) >= 0) { flags.push('FREE_MAIL_REQUESTER'); risk += 15; }\n  if (!String(vendor.finance_email || '').trim()) { flags.push('NO_FINANCE_CONTACT'); risk = Math.max(risk, 70); }\n  const recentChanges = history.filter(function (h) { return norm(h.vendor_code) === norm(item.vendor_code) && daysAgo(h.created_at) <= 90; }).length;\n  if (recentChanges >= 2) { flags.push('FREQUENT_CHANGES_90D'); risk += 30; }\n  else if (recentChanges === 1) { flags.push('SECOND_CHANGE_90D'); risk += 15; }\n}\nrisk = Math.min(100, risk);\n\nconst duplicate = history.some(function (h) {\n  return norm(h.iban_hash) === norm(item.iban_hash) && ['PENDING_VERIFICATION', 'APPROVED'].indexOf(String(h.status || '').toUpperCase()) >= 0;\n});\nlet route = 'pending';\nif (duplicate) route = 'duplicate';\nelse if (!vendor || risk >= 70) route = 'manual';\n\nconst cooling = risk >= 40 ? Number(cfg.cooling_hours_high) : Number(cfg.cooling_hours_standard);\nconst stamp = new Date();\nconst change_id = 'BC-' + stamp.toISOString().slice(0, 10).replace(/-/g, '') + '-' + Math.random().toString(36).slice(2, 8).toUpperCase();\nconst status = route === 'pending' ? 'PENDING_VERIFICATION' : route === 'duplicate' ? 'DUPLICATE_IGNORED' : 'MANUAL_REVIEW';\n\nreturn [{\n  json: Object.assign({}, item, {\n    route: route,\n    risk: risk,\n    risk_flags: flags.join(', '),\n    cooling_hours: cooling,\n    change_id: change_id,\n    vendor_name: vendor ? vendor.vendor_name : item.vendor_code,\n    finance_email: vendor ? String(vendor.finance_email || '') : '',\n    finance_lead_email: vendor ? String(vendor.finance_lead_email || '') : String(cfg.finance_lead || ''),\n    status: status,\n    event: route === 'pending' ? 'CHANGE_HELD' : route === 'duplicate' ? 'DUPLICATE_IGNORED' : 'MANUAL_REVIEW_REQUIRED',\n    actor: item.requested_by,\n    detail: route + ' | risk ' + risk + ' | ' + (flags.join(', ') || 'no flags'),\n    at: stamp.toISOString().slice(0, 16).replace('T', ' ')\n  })\n}];"
+      },
+      "id": "code-Assess risk and route",
+      "name": "Assess risk and route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Route: pending?",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "pending",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Route: pending?",
+      "name": "Route: pending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Duplicate change?",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "duplicate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Duplicate change?",
+      "name": "Duplicate change?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "action": "generate",
+        "dataPropertyName": "token",
+        "encodingType": "hex",
+        "stringLength": 64
+      },
+      "id": "crypto-Generate token",
+      "name": "Generate token",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.token }}",
+        "binaryData": false,
+        "dataPropertyName": "token_hash",
+        "encoding": "hex"
+      },
+      "id": "crypto-Hash token",
+      "name": "Hash token",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GuardRail - step 3: build the single-use links. The token and its hash come from the two Crypto nodes.\nconst cfg = $('Config (intake)').first().json;\nconst it = $json;\nconst token = it.token;\nconst token_hash = it.token_hash;\nconst now = new Date();\nconst addHours = function (h) { return new Date(now.getTime() + Number(h) * 3600000).toISOString(); };\nconst base = String(cfg.base_url || '').replace(/\\/+$/, '');\nif (!/^https?:\\/\\//.test(base)) throw new Error('Set base_url in \"Config (intake)\" before activating: it is required to build the approval links.');\nconst approve = base + '/webhook/vendor-bank-decision?t=' + token + '&d=approve';\nconst reject = base + '/webhook/vendor-bank-decision?t=' + token + '&d=reject';\nconst company = cfg.company || 'your finance team';\nconst NL = String.fromCharCode(10);\n\nconst body = [\n  'A change of bank details was requested for vendor ' + it.vendor_name + ' (' + it.vendor_code + ').',\n  '',\n  'Requested by: ' + it.requested_by,\n  'New account holder: ' + it.account_holder,\n  'New IBAN: ' + it.new_iban_masked,\n  'Bank country: ' + it.bank_country,\n  'Reason given: ' + it.reason,\n  'Risk score: ' + it.risk + '/100' + (it.risk_flags ? ' (' + it.risk_flags + ')' : ''),\n  '',\n  'Nothing has been changed. The request is on hold for ' + it.cooling_hours + ' hours (cooling period) before it can be approved.',\n  'Approve: ' + approve,\n  'Reject:  ' + reject,\n  '',\n  'The link is single-use and expires in ' + cfg.link_ttl_hours + ' hours. It was sent only to the finance address already on file for this vendor - never to the address that requested the change.',\n  '',\n  'If you were not expecting this request: use the reject link, then call the vendor on the number you already have and report it. Never confirm bank details by replying to an email.',\n  '',\n  company\n].join(NL);\n\nreturn [{\n  json: Object.assign({}, it, {\n    token_hash: token_hash,\n    created_at: now.toISOString(),\n    cooling_until: addHours(it.cooling_hours),\n    expires_at: addHours(cfg.link_ttl_hours),\n    last_stage: 0,\n    last_action_at: '',\n    decided_by: '',\n    note: '',\n    to: it.finance_email,\n    subject: '[Action required] Verify bank detail change for ' + it.vendor_name + ' (' + it.change_id + ')',\n    body: body,\n    text: 'Bank change held: ' + it.vendor_name + ' - risk ' + it.risk + '/100 - ' + it.change_id\n  })\n}];"
+      },
+      "id": "code-Issue verification token",
+      "name": "Issue verification token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "change_id": "={{ $json.change_id }}",
+            "vendor_code": "={{ $json.vendor_code }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "requested_by": "={{ $json.requested_by }}",
+            "finance_email": "={{ $json.finance_email }}",
+            "finance_lead_email": "={{ $json.finance_lead_email }}",
+            "new_iban": "={{ $json.new_iban }}",
+            "new_iban_masked": "={{ $json.new_iban_masked }}",
+            "iban_hash": "={{ $json.iban_hash }}",
+            "bank_country": "={{ $json.bank_country }}",
+            "risk": "={{ $json.risk }}",
+            "risk_flags": "={{ $json.risk_flags }}",
+            "status": "={{ $json.status }}",
+            "token_hash": "={{ $json.token_hash }}",
+            "created_at": "={{ $json.created_at }}",
+            "cooling_until": "={{ $json.cooling_until }}",
+            "expires_at": "={{ $json.expires_at }}",
+            "last_stage": "={{ $json.last_stage }}",
+            "last_action_at": "",
+            "decided_by": "",
+            "note": ""
+          },
+          "matchingColumns": [],
+          "schema": []
+        }
+      },
+      "id": "sheets-Append pending change",
+      "name": "Append pending change",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2200,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "={{ $('Issue verification token').first().json.to }}",
+        "subject": "={{ $('Issue verification token').first().json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $('Issue verification token').first().json.body }}",
+        "options": {}
+      },
+      "id": "email-verification request",
+      "name": "Email: verification request",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2420,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "",
+        "text": "={{ $('Issue verification token').first().json.text }}",
+        "additionalFields": {}
+      },
+      "id": "tg-change held",
+      "name": "Telegram: change held",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "",
+        "text": "={{ $('Assess risk and route').first().json.text }}",
+        "additionalFields": {}
+      },
+      "id": "tg-duplicate",
+      "name": "Telegram: duplicate",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "change_id": "={{ $json.change_id }}",
+            "vendor_code": "={{ $json.vendor_code }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "requested_by": "={{ $json.requested_by }}",
+            "finance_email": "={{ $json.finance_email }}",
+            "finance_lead_email": "={{ $json.finance_lead_email }}",
+            "new_iban": "={{ $json.new_iban }}",
+            "new_iban_masked": "={{ $json.new_iban_masked }}",
+            "iban_hash": "={{ $json.iban_hash }}",
+            "bank_country": "={{ $json.bank_country }}",
+            "risk": "={{ $json.risk }}",
+            "risk_flags": "={{ $json.risk_flags }}",
+            "status": "={{ $json.status }}",
+            "token_hash": "",
+            "created_at": "={{ $json.submitted_at }}",
+            "cooling_until": "",
+            "expires_at": "",
+            "last_stage": 0,
+            "last_action_at": "",
+            "decided_by": "",
+            "note": "held for manual review, no link issued"
+          },
+          "matchingColumns": [],
+          "schema": []
+        }
+      },
+      "id": "sheets-Append manual review",
+      "name": "Append manual review",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "",
+        "text": "={{ $('Assess risk and route').first().json.text }}",
+        "additionalFields": {}
+      },
+      "id": "tg-manual review",
+      "name": "Telegram: manual review",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "at": "={{ $json.at }}",
+            "event": "={{ $json.event }}",
+            "change_id": "={{ $json.change_id }}",
+            "actor": "={{ $json.actor }}",
+            "detail": "={{ $json.detail }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        }
+      },
+      "id": "sheets-Append audit",
+      "name": "Append audit",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2420,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "vendor-bank-decision",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "guard-webhook",
+      "name": "Decision webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        1180
+      ],
+      "webhookId": "vendor-bank-decision"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "Config (approval)-0",
+              "name": "base_url",
+              "value": "https://your-n8n.example.com",
+              "type": "string"
+            },
+            {
+              "id": "Config (approval)-1",
+              "name": "company",
+              "value": "Your company",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "set-Config (approval)",
+      "name": "Config (approval)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        20,
+        1180
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.query.t || '' }}",
+        "binaryData": false,
+        "dataPropertyName": "token_hash",
+        "encoding": "hex"
+      },
+      "id": "crypto-Hash decision token",
+      "name": "Hash decision token",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        240,
+        1180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "sheets-Read changes (approval)",
+      "name": "Read changes (approval)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        460,
+        1180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GuardRail - step 4: validate the one-click link. Nothing is written here.\nconst NL = String.fromCharCode(10);\nfunction esc(v) {\n  return String(v === null || v === undefined ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\nfunction page(title, tone, lines) {\n  return '<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>' + esc(title) + '</title></head><body style=\"margin:0;background:#0B1020;color:#E6EDF7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif\"><div style=\"max-width:560px;margin:0 auto;padding:48px 24px\"><div style=\"border-left:6px solid ' + tone + ';background:#141B2D;border-radius:10px;padding:24px\"><h1 style=\"margin:0 0 12px;font-size:22px\">' + esc(title) + '</h1>' + lines.map(function (l) { return '<p style=\"margin:8px 0;line-height:1.5;color:#B8C4D9\">' + esc(l) + '</p>'; }).join('') + '</div><p style=\"color:#5C6A82;font-size:12px;margin-top:24px\">Vendor bank-detail change guard</p></div></body></html>';\n}\nconst q = $('Decision webhook').first().json.query || {};\nconst rows = $('Read changes (approval)').all().map(function (i) { return i.json; });\nconst token = String(q.t || '').toLowerCase();\nconst decision = String(q.d || '').toLowerCase();\nconst now = Date.now();\nlet outcome = 'invalid';\nlet row = null;\nlet reason = '';\n\nif (!/^[a-f0-9]{64}$/.test(token)) {\n  reason = 'malformed token';\n} else {\n  const h = String($('Hash decision token').first().json.token_hash || '').toLowerCase();\n  row = rows.find(function (r) { return String(r.token_hash || '').toLowerCase() === h; }) || null;\n  if (!row) reason = 'unknown token';\n  else if (String(row.status || '').toUpperCase() !== 'PENDING_VERIFICATION') {\n    outcome = 'already';\n    reason = 'already ' + String(row.status || '').toLowerCase();\n  } else if (decision !== 'approve' && decision !== 'reject') {\n    reason = 'unknown decision';\n  } else if (row.expires_at && new Date(row.expires_at).getTime() < now) {\n    reason = 'link expired';\n  } else if (decision === 'approve' && row.cooling_until && new Date(row.cooling_until).getTime() > now) {\n    outcome = 'cooling';\n    reason = 'cooling period ends ' + String(row.cooling_until || '').slice(0, 16).replace('T', ' ');\n  } else {\n    outcome = decision === 'approve' ? 'approved' : 'rejected';\n  }\n}\n\nconst who = row ? row.vendor_name + ' (' + row.change_id + ')' : 'unknown request';\nconst when = row && row.cooling_until ? String(row.cooling_until).slice(0, 16).replace('T', ' ') + ' UTC' : '';\nlet html = '';\nif (outcome === 'approved') {\n  html = page('Change approved', '#22D3A5', ['The new bank details for ' + who + ' are cleared for use.', 'Apply them in your banking or ERP system and confirm with the vendor by phone using the number on file.']);\n} else if (outcome === 'rejected') {\n  html = page('Change rejected', '#F87171', ['The change for ' + who + ' has been rejected. Nothing was altered.', 'If this request was not expected, treat it as a fraud attempt: call the vendor on the number on file.']);\n} else if (outcome === 'cooling') {\n  html = page('Still in the cooling period', '#FBBF24', ['This change cannot be approved yet.', 'The cooling period ends on ' + when + '. No action was taken; the link stays valid.']);\n} else if (outcome === 'already') {\n  html = page('Already handled', '#94A3B8', ['This request was already processed (' + reason + ').', 'No further action is needed and nothing was changed again.']);\n} else if (reason === 'link expired') {\n  html = page('Link expired', '#F87171', ['This link is no longer valid (' + reason + ').', 'Ask finance to start a new request; the old one stays on hold until the watchdog closes it.']);\n} else {\n  html = page('Invalid link', '#F87171', ['This link cannot be used (' + esc(reason) + ').', 'If you clicked a link from an email, check that you copied the whole URL.']);\n}\n\nconst st = row ? String(row.status || '') : '';\nreturn [{\n  json: {\n    outcome: outcome,\n    reason: reason,\n    change_id: row ? String(row.change_id || '') : '',\n    vendor_name: row ? String(row.vendor_name || '') : '',\n    new_iban_masked: row ? String(row.new_iban_masked || '') : '',\n    requested_by: row ? String(row.requested_by || '') : '',\n    finance_email: row ? String(row.finance_email || '') : '',\n    finance_lead_email: row ? String(row.finance_lead_email || '') : '',\n    status_before: st,\n    cooling_until: row ? String(row.cooling_until || '') : '',\n    html: html,\n    event: outcome === 'invalid' ? 'LINK_DENIED' : '',\n    actor: 'link',\n    detail: outcome + (reason ? ' | ' + reason : ''),\n    at: new Date().toISOString().slice(0, 16).replace('T', ' '),\n    to: outcome === 'approved' ? (row ? row.finance_email : '') : (row ? row.requested_by : ''),\n    subject: outcome === 'approved' ? 'Bank change approved - apply it for ' + (row ? row.vendor_name : '') : 'Bank change rejected for ' + (row ? row.vendor_name : ''),\n    body: [\n      'Request: ' + (row ? row.change_id + ' - ' + row.vendor_name : 'unknown'),\n      'New IBAN: ' + (row ? row.new_iban_masked : 'n/a'),\n      'Requested by: ' + (row ? row.requested_by : 'n/a'),\n      '',\n      outcome === 'approved'\n        ? 'The change was approved after the cooling period. Apply it in the banking system and confirm with the vendor by phone using the number on file.'\n        : 'The change was rejected. Nothing was altered. If this request was unexpected, treat it as fraud: call the vendor on the number on file.',\n      ''\n    ].join(NL)\n  }\n}];"
+      },
+      "id": "code-Verify decision",
+      "name": "Verify decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        1180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Approved?",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Approved?",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        1180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "APPROVED",
+            "last_action_at": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "decided_by": "approval link",
+            "note": "approved after cooling period"
+          },
+          "matchingColumns": [
+            "change_id"
+          ],
+          "schema": []
+        }
+      },
+      "id": "sheets-Update change: approved",
+      "name": "Update change: approved",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1140,
+        1060
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "={{ $('Verify decision').first().json.to }}",
+        "subject": "={{ $('Verify decision').first().json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $('Verify decision').first().json.body }}",
+        "options": {}
+      },
+      "id": "email-approved to finance",
+      "name": "Email: approved to finance",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1360,
+        1060
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "",
+        "text": "={{ $('Verify decision').first().json.text }}",
+        "additionalFields": {}
+      },
+      "id": "tg-approved",
+      "name": "Telegram: approved",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1580,
+        1060
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Verify decision').first().json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-approved",
+      "name": "Respond: approved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1800,
+        1060
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Rejected?",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "rejected",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Rejected?",
+      "name": "Rejected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        1330
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "REJECTED",
+            "last_action_at": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "decided_by": "approval link",
+            "note": "rejected by approver"
+          },
+          "matchingColumns": [
+            "change_id"
+          ],
+          "schema": []
+        }
+      },
+      "id": "sheets-Update change: rejected",
+      "name": "Update change: rejected",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1140,
+        1330
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "={{ $('Verify decision').first().json.to }}",
+        "subject": "={{ $('Verify decision').first().json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $('Verify decision').first().json.body }}",
+        "options": {}
+      },
+      "id": "email-rejected to requester",
+      "name": "Email: rejected to requester",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1360,
+        1330
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Verify decision').first().json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-rejected",
+      "name": "Respond: rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        1330
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Cooling?",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "cooling",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Cooling?",
+      "name": "Cooling?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        1480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Verify decision').first().json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-cooling",
+      "name": "Respond: cooling",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Already processed?",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "already",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Already processed?",
+      "name": "Already processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        1630
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Verify decision').first().json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-already",
+      "name": "Respond: already",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1630
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-invalid link",
+      "name": "Respond: invalid link",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        1780
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 7,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "guard-schedule",
+      "name": "Daily watchdog",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        2000
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "Config (watchdog)-0",
+              "name": "finance_lead",
+              "value": "finance-lead@example.com",
+              "type": "string"
+            },
+            {
+              "id": "Config (watchdog)-1",
+              "name": "company",
+              "value": "Your company",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "set-Config (watchdog)",
+      "name": "Config (watchdog)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        20,
+        2000
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "sheets-Read changes (watchdog)",
+      "name": "Read changes (watchdog)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        240,
+        2000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GuardRail - step 5: the watchdog. Decide which holds need a reminder or must expire.\n// State lives in the sheet (last_stage), so a stage is never sent twice.\nconst rows = $input.all().map(function (i) { return i.json; });\nconst cfg = $('Config (watchdog)').first().json;\nconst NL = String.fromCharCode(10);\nconst out = [];\nfor (const r of rows) {\n  if (String(r.status || '').toUpperCase() !== 'PENDING_VERIFICATION') continue;\n  const created = new Date(r.created_at).getTime();\n  if (!isFinite(created)) continue;\n  const ageH = (Date.now() - created) / 3600000;\n  const stage = ageH >= 72 ? 3 : ageH >= 48 ? 2 : ageH >= 24 ? 1 : 0;\n  const last = Number(r.last_stage || 0);\n  if (stage === 0 || stage <= last) continue;\n  const lead = String(r.finance_lead_email || cfg.finance_lead || '');\n  const finance = String(r.finance_email || '');\n  const to = stage === 3 ? String(r.requested_by || '') : stage === 2 ? (lead || finance) : finance;\n  if (!to) continue;\n  const who = r.vendor_name + ' (' + r.change_id + ')';\n  const hours = Math.round(ageH);\n  let subject;\n  let body;\n  if (stage === 3) {\n    subject = 'Hold expired, no change applied - ' + r.vendor_name;\n    body = [\n      'The bank detail change for ' + who + ' reached 72 hours without verification.',\n      'It has been closed as EXPIRED. Nothing was applied.',\n      '',\n      'Requested by: ' + r.requested_by,\n      'New IBAN: ' + r.new_iban_masked,\n      'Risk: ' + r.risk + '/100 (' + (r.risk_flags || 'no flags') + ')',\n      '',\n      'If the vendor still needs the change, they must start a new request. Never re-send the old link.'\n    ].join(NL);\n  } else {\n    subject = (stage === 2 ? '[Escalation] ' : '[Reminder] ') + 'Bank change still unverified - ' + r.vendor_name;\n    body = [\n      'The bank detail change for ' + who + ' has been waiting ' + hours + ' hours.',\n      'Risk: ' + r.risk + '/100 (' + (r.risk_flags || 'no flags') + ')',\n      'Cooling period ends: ' + String(r.cooling_until || '').slice(0, 16).replace('T', ' ') + ' UTC',\n      '',\n      'Use the approve or reject link in the original email. For safety the link is not re-sent.',\n      stage === 2 ? 'This is the second reminder: the finance lead is now the recipient.' : ''\n    ].join(NL);\n  }\n  out.push({\n    json: {\n      change_id: r.change_id,\n      stage: stage,\n      status_if_expire: stage === 3 ? 'EXPIRED' : '',\n      to: to,\n      subject: subject,\n      body: body,\n      text: (stage === 3 ? 'Expired: ' : 'Reminder ' + stage + ': ') + who + ' - ' + hours + 'h',\n      event: stage === 3 ? 'HOLD_EXPIRED' : 'REMINDER_SENT',\n      actor: 'watchdog',\n      detail: 'stage ' + stage + ' at ' + hours + 'h',\n      at: new Date().toISOString().slice(0, 16).replace('T', ' ')\n    }\n  });\n}\nreturn out;"
+      },
+      "id": "code-Plan reminders",
+      "name": "Plan reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1900
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GuardRail - step 6: one daily line for the finance lead instead of per-vendor noise.\nconst rows = $input.all().map(function (i) { return i.json; });\nconst cfg = $('Config (watchdog)').first().json;\nconst NL = String.fromCharCode(10);\nconst now = Date.now();\nconst week = 7 * 86400000;\nfunction st(r) { return String(r.status || '').toUpperCase(); }\nfunction pending() { return rows.filter(function (r) { return st(r) === 'PENDING_VERIFICATION'; }); }\nfunction recent(status) {\n  return rows.filter(function (r) {\n    const t = new Date(r.last_action_at || r.created_at || 0).getTime();\n    return st(r) === status && isFinite(t) && t > now - week;\n  }).length;\n}\nconst p = pending();\nconst oldest = p.reduce(function (m, r) {\n  const t = new Date(r.created_at || 0).getTime();\n  return isFinite(t) ? Math.max(m, (now - t) / 3600000) : m;\n}, 0);\nconst high = p.filter(function (r) { return Number(r.risk || 0) >= 70; }).length;\nconst overdueCooling = p.filter(function (r) { return new Date(r.cooling_until || 0).getTime() < now; }).length;\n\nconst body = [\n  'Vendor bank-detail guard - daily digest',\n  '',\n  'Waiting for verification: ' + p.length,\n  '  of which high risk: ' + high,\n  '  past cooling, still waiting: ' + overdueCooling,\n  '  oldest hold: ' + Math.round(oldest) + ' hours',\n  '',\n  'Last 7 days: approved ' + recent('APPROVED') + ' | rejected ' + recent('REJECTED') + ' | expired ' + recent('EXPIRED') + ' | manual review ' + recent('MANUAL_REVIEW'),\n  '',\n  p.length ? 'Open holds: ' + p.slice(0, 10).map(function (r) { return r.vendor_name + ' (' + r.risk + ')'; }).join(', ') : 'Nothing open. Good.',\n  '',\n  'Reminder: links are single-use and are never re-sent by email.'\n].join(NL);\n\nreturn [{ json: { to: cfg.finance_lead || '', subject: 'Bank-detail guard digest - ' + p.length + ' open', body: body, text: body.slice(0, 3500) } }];"
+      },
+      "id": "code-Build digest",
+      "name": "Build digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        2160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Expired?",
+              "leftValue": "={{ $json.stage }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-Expired?",
+      "name": "Expired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        1900
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "email-hold expired",
+      "name": "Email: hold expired",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        940,
+        1820
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "EXPIRED",
+            "last_action_at": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "last_stage": "={{ $json.stage }}",
+            "note": "closed by watchdog after 72h"
+          },
+          "matchingColumns": [
+            "change_id"
+          ],
+          "schema": []
+        }
+      },
+      "id": "sheets-Update change: expired",
+      "name": "Update change: expired",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1160,
+        1820
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "email-reminder",
+      "name": "Email: reminder",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        940,
+        2000
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "last_stage": "={{ $json.stage }}",
+            "last_action_at": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "note": "={{ 'reminder stage ' + $json.stage }}"
+          },
+          "matchingColumns": [
+            "change_id"
+          ],
+          "schema": []
+        }
+      },
+      "id": "sheets-Update change: reminder stage",
+      "name": "Update change: reminder stage",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1160,
+        2000
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "email-daily digest",
+      "name": "Email: daily digest",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        720,
+        2160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "",
+        "text": "={{ $('Build digest').first().json.text }}",
+        "additionalFields": {}
+      },
+      "id": "tg-daily digest",
+      "name": "Telegram: daily digest",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        940,
+        2160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "guard-error",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        2400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format a short, safe alert - no payloads, no secrets.\nconst e = $json;\nconst NL = String.fromCharCode(10);\nconst lines = [];\nlines.push('GuardRail error in \"' + (e.workflow && e.workflow.name ? e.workflow.name : 'vendor bank change guard') + '\"');\nlines.push('Node: ' + (e.execution && e.execution.lastNodeExecuted ? e.execution.lastNodeExecuted : 'unknown'));\nlines.push('Error: ' + (e.execution && e.execution.error && e.execution.error.message ? e.execution.error.message : 'no detail'));\nif (e.execution && e.execution.url) lines.push('Execution: ' + e.execution.url);\nreturn [{ json: { text: lines.join(NL) } }];"
+      },
+      "id": "code-Format error alert",
+      "name": "Format error alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        2400
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "id": "tg-error",
+      "name": "Telegram: error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        2400
+      ]
+    }
+  ],
+  "connections": {
+    "Bank change form": {
+      "main": [
+        [
+          {
+            "node": "Config (intake)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (intake)": {
+      "main": [
+        [
+          {
+            "node": "Normalise and validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise and validate": {
+      "main": [
+        [
+          {
+            "node": "Hash IBAN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash IBAN": {
+      "main": [
+        [
+          {
+            "node": "Valid submission?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid submission?": {
+      "main": [
+        [
+          {
+            "node": "Read vendors",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read vendors": {
+      "main": [
+        [
+          {
+            "node": "Read change history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read change history": {
+      "main": [
+        [
+          {
+            "node": "Assess risk and route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assess risk and route": {
+      "main": [
+        [
+          {
+            "node": "Route: pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: pending?": {
+      "main": [
+        [
+          {
+            "node": "Generate token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duplicate change?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate token": {
+      "main": [
+        [
+          {
+            "node": "Hash token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash token": {
+      "main": [
+        [
+          {
+            "node": "Issue verification token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Issue verification token": {
+      "main": [
+        [
+          {
+            "node": "Append pending change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append pending change": {
+      "main": [
+        [
+          {
+            "node": "Email: verification request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: verification request": {
+      "main": [
+        [
+          {
+            "node": "Telegram: change held",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate change?": {
+      "main": [
+        [
+          {
+            "node": "Telegram: duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append manual review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append manual review": {
+      "main": [
+        [
+          {
+            "node": "Telegram: manual review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: duplicate": {
+      "main": [
+        [
+          {
+            "node": "Append audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: manual review": {
+      "main": [
+        [
+          {
+            "node": "Append audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision webhook": {
+      "main": [
+        [
+          {
+            "node": "Config (approval)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (approval)": {
+      "main": [
+        [
+          {
+            "node": "Hash decision token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash decision token": {
+      "main": [
+        [
+          {
+            "node": "Read changes (approval)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read changes (approval)": {
+      "main": [
+        [
+          {
+            "node": "Verify decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify decision": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Update change: approved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rejected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update change: approved": {
+      "main": [
+        [
+          {
+            "node": "Email: approved to finance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: approved to finance": {
+      "main": [
+        [
+          {
+            "node": "Telegram: approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: approved": {
+      "main": [
+        [
+          {
+            "node": "Respond: approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rejected?": {
+      "main": [
+        [
+          {
+            "node": "Update change: rejected",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cooling?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update change: rejected": {
+      "main": [
+        [
+          {
+            "node": "Email: rejected to requester",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: rejected to requester": {
+      "main": [
+        [
+          {
+            "node": "Respond: rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cooling?": {
+      "main": [
+        [
+          {
+            "node": "Respond: cooling",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Already processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already processed?": {
+      "main": [
+        [
+          {
+            "node": "Respond: already",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: invalid link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond: invalid link": {
+      "main": [
+        [
+          {
+            "node": "Append audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily watchdog": {
+      "main": [
+        [
+          {
+            "node": "Config (watchdog)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (watchdog)": {
+      "main": [
+        [
+          {
+            "node": "Read changes (watchdog)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read changes (watchdog)": {
+      "main": [
+        [
+          {
+            "node": "Plan reminders",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan reminders": {
+      "main": [
+        [
+          {
+            "node": "Expired?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expired?": {
+      "main": [
+        [
+          {
+            "node": "Email: hold expired",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email: reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: hold expired": {
+      "main": [
+        [
+          {
+            "node": "Update change: expired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: reminder": {
+      "main": [
+        [
+          {
+            "node": "Update change: reminder stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build digest": {
+      "main": [
+        [
+          {
+            "node": "Email: daily digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: daily digest": {
+      "main": [
+        [
+          {
+            "node": "Telegram: daily digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Format error alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format error alert": {
+      "main": [
+        [
+          {
+            "node": "Telegram: error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

@@ -1,0 +1,95 @@
+{
+  "name": "VideoUpscaler — Official n8n Community Node (3-Node Pipeline)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Official Community Node (`n8n-nodes-videoupscaler`)\nWhen you install `n8n-nodes-videoupscaler`, you do not need any `HTTP Request`, `Wait`, or `IF` loop nodes.\n\n1. **Install**: Go to *Settings -> Community Nodes -> Install* and enter `n8n-nodes-videoupscaler`.\n2. **Credential**: Add your `vu_live_...` API key from [videoupscaler.co/settings/apikeys](https://videoupscaler.co/settings/apikeys).\n3. **Run**: The **VideoUpscaler** node automatically waits for the 4K render using server-side long-polling (`?wait=45`) and outputs `output_url`.",
+        "height": 300,
+        "width": 440,
+        "color": 4
+      },
+      "id": "d3f4c110-0001-4000-8000-000000000001",
+      "name": "Official Node Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-260, 140]
+    },
+    {
+      "parameters": {},
+      "id": "d3f4c110-1001-4000-8000-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 260]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upscale",
+        "videoUrl": "https://example.com/ai-generated-clip.mp4",
+        "resolution": "4k",
+        "waitForCompletion": true,
+        "maxWaitMinutes": 15,
+        "additionalFields": {}
+      },
+      "id": "d3f4c110-1002-4000-8000-000000000002",
+      "name": "VideoUpscaler: Upscale to 4K",
+      "type": "n8n-nodes-videoupscaler.videoUpscaler",
+      "typeVersion": 1,
+      "position": [480, 260]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-output-url",
+              "name": "output_url",
+              "value": "={{ $json.output_url }}",
+              "type": "string"
+            },
+            {
+              "id": "node-credits-cost",
+              "name": "credits_cost",
+              "value": "={{ $json.credits_cost }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d3f4c110-1003-4000-8000-000000000003",
+      "name": "Ready for YouTube / TikTok / Drive",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [720, 260]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "VideoUpscaler: Upscale to 4K",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VideoUpscaler: Upscale to 4K": {
+      "main": [
+        [
+          {
+            "node": "Ready for YouTube / TikTok / Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

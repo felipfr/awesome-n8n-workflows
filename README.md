@@ -46,6 +46,7 @@ All credit for the creation of each workflow belongs to their respective authors
 - Data synchronization
 - Event-driven workflows
 - Scheduled tasks
+- AI 4K video upscaling & media enhancement pipelines via [VideoUpscaler](https://videoupscaler.co) ([Integration Guide](https://videoupscaler.co/integrations) · [`n8n-nodes-videoupscaler`](https://www.npmjs.com/package/n8n-nodes-videoupscaler))
 
 </details>
 
@@ -162,6 +163,7 @@ Each workflow follows a consistent naming convention:
 - `Schedule_Twitter_Automation_Scheduled.json` - Scheduled Twitter posting
 - `Webhook_Slack_Notification_Triggered.json` - Webhook-triggered Slack alerts
 - `Manual_Data_Processing_Triggered.json` - Manual data processing workflow
+- `Manual_VideoUpscaler_Upscale_Triggered.json` - 4K AI video super-resolution workflow powered by [VideoUpscaler](https://videoupscaler.co/integrations) ([npm](https://www.npmjs.com/package/n8n-nodes-videoupscaler))
 
 ## 🤝 Contributing
 

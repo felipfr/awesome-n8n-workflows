@@ -1,0 +1,144 @@
+{
+  "name": "VideoUpscaler — Async Webhook Callback Pipeline (Batch & Long Videos)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## How it works (Zero Polling)\nFor batch jobs or multi-minute 4K renders, pass `webhook_url` when submitting the job. VideoUpscaler immediately returns `status: processing` and sends an HTTP `POST` to your **Webhook Receiver** node the instant the 4K MP4 is ready on the CDN.\n\n- **Header**: `X-VideoUpscaler-Event: task.completed | task.failed`\n- **Body**: Full task JSON including `output_url`, `credits_cost`, and `duration_seconds`.",
+        "height": 300,
+        "width": 420
+      },
+      "id": "c2f4c110-0001-4000-8000-000000000001",
+      "name": "How it works",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-240, 60]
+    },
+    {
+      "parameters": {
+        "content": "## Setup (2 minutes)\n1. Open **Receive VideoUpscaler Webhook** and copy its **Production URL**.\n2. Paste that URL into the `webhook_url` field in **Submit Async 4K Upscale**.\n3. Add your `Bearer vu_live_...` API key from [videoupscaler.co/settings/apikeys](https://videoupscaler.co/settings/apikeys) as a **Header Auth** credential.",
+        "height": 240,
+        "width": 420,
+        "color": 4
+      },
+      "id": "c2f4c110-0002-4000-8000-000000000002",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-240, 380]
+    },
+    {
+      "parameters": {},
+      "id": "c2f4c110-1001-4000-8000-000000000001",
+      "name": "Trigger Batch Job",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://videoupscaler.co/api/v1/upscale",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"video_url\": \"https://example.com/source-clip.mp4\",\n  \"resolution\": \"4k\",\n  \"webhook_url\": \"https://your-n8n-domain.example.com/webhook/videoupscaler-done\"\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "c2f4c110-1002-4000-8000-000000000002",
+      "name": "Submit Async 4K Upscale",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 160]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "videoupscaler-done",
+        "options": {}
+      },
+      "id": "c2f4c110-1003-4000-8000-000000000003",
+      "name": "Receive VideoUpscaler Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 420],
+      "webhookId": "videoupscaler-done"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "wh-task-id",
+              "name": "task_id",
+              "value": "={{ $json.body.id }}",
+              "type": "string"
+            },
+            {
+              "id": "wh-status",
+              "name": "status",
+              "value": "={{ $json.body.status }}",
+              "type": "string"
+            },
+            {
+              "id": "wh-output-url",
+              "name": "output_url",
+              "value": "={{ $json.body.output_url }}",
+              "type": "string"
+            },
+            {
+              "id": "wh-credits",
+              "name": "credits_cost",
+              "value": "={{ $json.body.credits_cost }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c2f4c110-1004-4000-8000-000000000004",
+      "name": "Extract Completed 4K Video URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [500, 420]
+    }
+  ],
+  "connections": {
+    "Trigger Batch Job": {
+      "main": [
+        [
+          {
+            "node": "Submit Async 4K Upscale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive VideoUpscaler Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Completed 4K Video URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

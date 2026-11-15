@@ -1,0 +1,164 @@
+{
+  "name": "B2B Domain Tech Stack, MX & Company Dossier Enrichment (Apify)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Setup\n1. Create an n8n **Header Auth** credential named `Apify API Token (Header Auth)`:\n   - Name: `Authorization`\n   - Value: `Bearer <your Apify API token>`\n2. Select it on the **Apify** HTTP Request node.\n3. Select your Slack credential on **Notify Sales in Slack** and set the channel (or swap this node for your CRM node: HubSpot, Pipedrive, Salesforce).\n4. Activate the workflow and call it from your CRM / form tool:\n\n`POST <your-n8n-url>/webhook/b2b-dossier`\n`{ \"domain\": \"example.com\" }`\n\nThe webhook answers with the dossier summary as JSON. One `dossier-generated` event is charged per enriched domain.",
+        "height": 380,
+        "width": 440
+      },
+      "id": "0",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "b2b-dossier",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook: POST /b2b-dossier",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "b2b-dossier"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/vBBOmirJVbyMjt6x4/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ domain: $json.body.domain }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "2",
+      "name": "Apify: B2B Company Lead Dossier",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Apify API Token (Header Auth)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shape the dossier into flat CRM-ready fields plus a Slack message.\nconst d = items[0]?.json || {};\nif (!d.domain) {\n  throw new Error('The Actor returned no dossier. Check that the request body contains a valid \"domain\".');\n}\n\nconst crm = {\n  domain: d.domain,\n  company: d.company,\n  websiteTitle: d.websiteTitle || '',\n  emailProvider: d.emailProvider || '',\n  techStack: (d.detectedTechStack || []).join(', '),\n  hasSpfRecord: d.hasSpfRecord,\n  registeredAt: d.registeredAt || '',\n  activeSubdomains: (d.activeSubdomains || []).join(', '),\n  socialMentionsCount: d.socialMentionsCount || 0,\n  localLeadsCount: d.localLeadsCount || 0,\n  scrapedAt: d.scrapedAt\n};\n\nconst slackText = [\n  `*New account dossier: ${crm.domain}*`,\n  `Website: ${crm.websiteTitle || 'n/a'}`,\n  `Email provider: ${crm.emailProvider || 'n/a'}`,\n  `Tech stack: ${crm.techStack || 'none detected'}`,\n  `Registered: ${crm.registeredAt || 'unknown'}`,\n  `HN/Reddit mentions: ${crm.socialMentionsCount}`\n].join('\\n');\n\nreturn [{ json: { crm, slackText, llmMarkdown: d.llmMarkdown || '' } }];"
+      },
+      "id": "3",
+      "name": "Format CRM Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#sales-leads",
+          "mode": "name"
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "4",
+      "name": "Notify Sales in Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1020,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, dossier: $('Format CRM Payload').first().json.crm, llmMarkdown: $('Format CRM Payload').first().json.llmMarkdown }) }}",
+        "options": {}
+      },
+      "id": "5",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: POST /b2b-dossier": {
+      "main": [
+        [
+          {
+            "node": "Apify: B2B Company Lead Dossier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify: B2B Company Lead Dossier": {
+      "main": [
+        [
+          {
+            "node": "Format CRM Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format CRM Payload": {
+      "main": [
+        [
+          {
+            "node": "Notify Sales in Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Sales in Slack": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,255 @@
+{
+  "name": "UK Gov Tenders and ClinicalTrials.gov B2B CRM Leads",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## UK Gov Tenders + ClinicalTrials.gov B2B Leads (Zero-Key CRM Feed)\n\n### How it works\n1. **Manual / Daily Schedule Trigger** initializes both zero-key B2B intelligence queries simultaneously.\n2. **Branch A (Contracts Finder OCDS):** Queries `contractsfinder.service.gov.uk/Published/Notices/OCDS/Search` for active UK public-sector tenders and normalizes buyer organizations, direct `.gov.uk`/NHS emails, GBP values, and deadlines.\n3. **Branch B (ClinicalTrials.gov v2):** Queries `clinicaltrials.gov/api/v2/studies` for actively recruiting Industry-sponsored biotech trials and extracts sponsor names, phases, enrollment, and central contact emails.\n4. **Normalize CRM Lead Schema** merges both branches into a single uniform CRM record ready for HubSpot, Pipedrive, Airtable, Google Sheets, or Slack.\n\n### Setup & Attribution (MIT)\n- **Zero credentials required** — both official public APIs work out of the box.\n- **Author:** [@truonggiang0111](https://github.com/truonggiang0111) (MIT License)\n- **Optional CLI / MCP / Python SDK:** `npx -y github:truonggiang0111/b2b-market-intel-mcp` | https://github.com/truonggiang0111/b2b-market-intel-python | https://www.agensi.io/creators/giang-tr-ng-tr-ng",
+        "height": 360,
+        "width": 660,
+        "color": 4
+      },
+      "id": "087680b5-0592-e7c8-f8be-04d22689b18a",
+      "name": "CRM Lead Pipeline Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        -160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b9e78bfc-d5c3-3f47-6925-fc2907832be6",
+      "name": "Test Workflow Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        120,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "3865e323-aafc-b9c6-7fc6-381ce91e6d20",
+      "name": "Daily Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        120,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const since = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 19) + 'Z';\nreturn [{\n  json: {\n    ukGovUrl: `https://www.contractsfinder.service.gov.uk/Published/Notices/OCDS/Search?publishedFrom=${encodeURIComponent(since)}&stages=tender,award&limit=15`,\n    clinicalTrialsUrl: 'https://clinicaltrials.gov/api/v2/studies?query.cond=oncology&filter.overallStatus=RECRUITING&filter.advanced=AREA%5BLeadSponsorClass%5DINDUSTRY&pageSize=10',\n  },\n}];"
+      },
+      "id": "7359f79b-cd3b-5153-bfc2-2b1b9f0df483",
+      "name": "Build Zero-Key Query URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.ukGovUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-b2b-market-intel/1.0"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "20cb52ed-c25b-ec4c-5d40-8d58a5d11d3b",
+      "name": "Fetch UK Gov Tenders OCDS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.clinicalTrialsUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-b2b-market-intel/1.0"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "d680e0f3-5d66-5dd7-4227-32dce5662b48",
+      "name": "Fetch ClinicalTrials v2 Studies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "2285a5cc-af92-fb4d-270c-9bfff75d20c0",
+      "name": "Wait For Both Lead Streams",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        920,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge and normalize UK Gov Tenders + ClinicalTrials.gov Industry leads into one CRM schema\nconst ukItems = $('Fetch UK Gov Tenders OCDS').all();\nconst ctItems = $('Fetch ClinicalTrials v2 Studies').all();\nconst uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst leads = [];\n\nfor (const item of ukItems) {\n  const releases = Array.isArray((item.json || {}).releases) ? item.json.releases : [];\n  for (const rel of releases) {\n    const tender = rel.tender || {};\n    const parties = Array.isArray(rel.parties) ? rel.parties : [];\n    const buyer = parties.find((p) => Array.isArray(p.roles) && (p.roles.includes('buyer') || p.roles.includes('procuringEntity'))) || parties[0] || {};\n    const contact = buyer.contactPoint || {};\n    const val = tender.value || tender.minValue || {};\n    const rawId = String(rel.id || '');\n    const uuidCandidate = rawId.includes('-') ? rawId.replace(/-[^-]+$/, '') : rawId;\n    const sourceUrl = uuidRe.test(uuidCandidate)\n      ? `https://www.contractsfinder.service.gov.uk/Notice/${uuidCandidate}`\n      : 'https://www.contractsfinder.service.gov.uk/';\n\n    leads.push({\n      json: {\n        leadSource: 'uk-contracts-finder',\n        externalId: rel.ocid || rawId,\n        organization: String(buyer.name || (rel.buyer || {}).name || '').trim(),\n        contactName: contact.name ? String(contact.name).trim() : null,\n        contactEmail: contact.email ? String(contact.email).trim() : null,\n        opportunityTitle: String(tender.title || '').trim(),\n        metricLabel: typeof val.amount === 'number' ? `GBP ${val.amount.toLocaleString('en-US')}` : null,\n        deadlineOrPhase: String((tender.tenderPeriod || {}).endDate || '').slice(0, 10) || null,\n        sourceUrl,\n      },\n    });\n  }\n}\n\nfor (const item of ctItems) {\n  const studies = Array.isArray((item.json || {}).studies) ? item.json.studies : [];\n  for (const st of studies) {\n    const ps = st.protocolSection || {};\n    const ident = ps.identificationModule || {};\n    const sponsor = (ps.sponsorCollaboratorsModule || {}).leadSponsor || {};\n    const design = ps.designModule || {};\n    const contacts = (ps.contactsLocationsModule || {}).centralContacts || [];\n    const primary = contacts.find((c) => c && c.email) || contacts[0] || {};\n    const nctId = ident.nctId || '';\n    leads.push({\n      json: {\n        leadSource: 'clinicaltrials-gov-v2',\n        externalId: nctId,\n        organization: sponsor.name || '',\n        contactName: primary.name || null,\n        contactEmail: primary.email || null,\n        opportunityTitle: ident.briefTitle || '',\n        metricLabel: (design.enrollmentInfo || {}).count ? `Enrollment ${design.enrollmentInfo.count}` : null,\n        deadlineOrPhase: (design.phases || []).join(', ') || null,\n        sourceUrl: nctId ? `https://clinicaltrials.gov/study/${nctId}` : 'https://clinicaltrials.gov/',\n      },\n    });\n  }\n}\n\nreturn leads.length ? leads : [{ json: { status: 'no_leads_returned' } }];"
+      },
+      "id": "60e5beb3-7a29-8240-496c-c044335d4298",
+      "name": "Normalize Unified CRM Lead Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        340
+      ]
+    }
+  ],
+  "connections": {
+    "Test Workflow Manually": {
+      "main": [
+        [
+          {
+            "node": "Build Zero-Key Query URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Zero-Key Query URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Zero-Key Query URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch UK Gov Tenders OCDS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch ClinicalTrials v2 Studies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch UK Gov Tenders OCDS": {
+      "main": [
+        [
+          {
+            "node": "Wait For Both Lead Streams",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch ClinicalTrials v2 Studies": {
+      "main": [
+        [
+          {
+            "node": "Wait For Both Lead Streams",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Wait For Both Lead Streams": {
+      "main": [
+        [
+          {
+            "node": "Normalize Unified CRM Lead Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "felipfr-crm-uk-gov-clinical-trials"
+  },
+  "tags": [
+    {
+      "name": "crm"
+    },
+    {
+      "name": "b2b-leads"
+    },
+    {
+      "name": "zero-key"
+    }
+  ]
+}

@@ -1,0 +1,253 @@
+{
+  "name": "Shopify and WooCommerce 1-Star App Churn Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Shopify & WooCommerce 1-Star Churn Monitor (Zero-Key)\n\n### How it works\n1. **Manual / Daily Schedule Trigger** sets target Shopify App slug (`klaviyo-email-marketing`) and WooCommerce plugin slug (`woocommerce-payments`).\n2. **Branch A (Shopify App Store):** Fetches public 1-star reviews (`?ratings[]=1`) and extracts review ID, date, churn pain categories (`billing`, `bugs`, `cancel_lockin`, `support`), and text excerpt.\n3. **Branch B (WooCommerce / WordPress.org):** Fetches official `api.wordpress.org` plugin stats + 1-star RSS review feed (`?filter=1`).\n4. **Normalize Churn Signals** merges both e-commerce feeds into a unified outreach/product-intel list.\n\n### Setup & Attribution (MIT)\n- **Zero API keys required.** Customize `shopifyAppSlug` or `wpPluginSlug` in **Configure Store Targets**.\n- **Author:** [@truonggiang0111](https://github.com/truonggiang0111) (MIT License)\n- **Hosted Skills / Cloud Batch ($5/mo free tier):** https://www.agensi.io/skills/wordpress-woocommerce-plugin-churn-spy | https://apify.com/ttyan0111/shopify-app-store-churn-spy",
+        "height": 360,
+        "width": 660,
+        "color": 4
+      },
+      "id": "aaa78c3e-553c-a845-c7e9-41b92c7de33e",
+      "name": "E-Commerce Churn Monitor Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        -160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "0ced761d-78b8-4249-fb1f-b0c1aa712cd7",
+      "name": "Test Workflow Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        120,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "d0604902-e213-f9f4-2da9-f1bd31baada6",
+      "name": "Daily Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        120,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const shopifyAppSlug = 'klaviyo-email-marketing';\nconst wpPluginSlug = 'woocommerce-payments';\nreturn [{\n  json: {\n    shopifyAppSlug,\n    wpPluginSlug,\n    shopifyUrl: `https://apps.shopify.com/${encodeURIComponent(shopifyAppSlug)}/reviews?ratings[]=1`,\n    wpRssUrl: `https://wordpress.org/support/plugin/${encodeURIComponent(wpPluginSlug)}/reviews/feed/?filter=1`,\n  },\n}];"
+      },
+      "id": "0eb9d779-6a33-14fb-2015-a160b693cbf3",
+      "name": "Configure Store Targets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.shopifyUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.9"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "3b1e35df-74f5-31f4-2ae0-522c60dece25",
+      "name": "Fetch Shopify 1-Star Reviews",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.wpRssUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "49833328-9fcf-b323-08a9-f57d4f33779c",
+      "name": "Fetch WooCommerce 1-Star RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "d9eac316-4aff-bf25-7eb0-9b175cf12a31",
+      "name": "Wait For Both Store Feeds",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        920,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Configure Store Targets').first().json;\nconst shopifyHtml = String(($('Fetch Shopify 1-Star Reviews').first().json || {}).data ?? ($('Fetch Shopify 1-Star Reviews').first().json || {}).body ?? '');\nconst wpXml = String(($('Fetch WooCommerce 1-Star RSS').first().json || {}).data ?? ($('Fetch WooCommerce 1-Star RSS').first().json || {}).body ?? '');\n\nconst painRules = {\n  billing_pricing: /\\b(bill|billing|price|pricing|expensive|fee|charge|cost|cancel|refund|subscription)\\b/i,\n  bugs_breakage: /\\b(broken|bug|crash|error|fail|slow|conflict|update|sync|doesn.?t work)\\b/i,\n  support_churn: /\\b(support|no reply|ignored|worst|waste|uninstall|switch|alternative)\\b/i,\n};\nconst tagPain = (text) => Object.entries(painRules).filter(([, rx]) => rx.test(text)).map(([k]) => k);\nconst out = [];\n\n// 1. Parse Shopify 1-star review blocks\nconst shopBlocks = shopifyHtml.split('data-review-content-id=\"').slice(1, 11);\nfor (const b of shopBlocks) {\n  const reviewId = b.split('\"', 1)[0];\n  const txtMatch = b.match(/data-truncate-content-copy[^>]*>([\\s\\S]*?)<\\/div>/);\n  const excerpt = txtMatch ? txtMatch[1].replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim() : '';\n  const dateMatch = b.match(/<div class=\"tw-text-body-xs tw-text-fg-tertiary\">\\s*([^<]+?)\\s*<\\/div>/);\n  if (excerpt) {\n    out.push({\n      json: {\n        platform: 'shopify-app-store',\n        appOrPlugin: cfg.shopifyAppSlug,\n        reviewId,\n        rating: 1,\n        reviewDate: dateMatch ? dateMatch[1].trim() : null,\n        painCategories: tagPain(excerpt),\n        excerpt: excerpt.slice(0, 260),\n        sourceUrl: cfg.shopifyUrl,\n      },\n    });\n  }\n}\n\n// 2. Parse WordPress.org / WooCommerce 1-star RSS items\nfor (const m of [...wpXml.matchAll(/<item>([\\s\\S]*?)<\\/item>/g)].slice(0, 10)) {\n  const block = m[1];\n  const getTag = (tag) => {\n    const hit = block.match(new RegExp(`<${tag}[^>]*>([\\\\s\\\\S]*?)<\\\\/${tag}>`, 'i'));\n    return hit ? hit[1].replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim() : '';\n  };\n  const title = getTag('title');\n  const desc = getTag('description');\n  out.push({\n    json: {\n      platform: 'wordpress-woocommerce',\n      appOrPlugin: cfg.wpPluginSlug,\n      reviewId: getTag('guid') || getTag('link'),\n      rating: 1,\n      reviewDate: getTag('pubDate'),\n      painCategories: tagPain(`${title} ${desc}`),\n      excerpt: `${title} — ${desc}`.slice(0, 260),\n      sourceUrl: getTag('link') || cfg.wpRssUrl,\n    },\n  });\n}\n\nreturn out.length ? out : [{ json: { status: 'no_1star_reviews_parsed' } }];"
+      },
+      "id": "9034747a-7b08-f06d-ef43-6ad0588e96ba",
+      "name": "Parse & Tag 1-Star Churn Signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        340
+      ]
+    }
+  ],
+  "connections": {
+    "Test Workflow Manually": {
+      "main": [
+        [
+          {
+            "node": "Configure Store Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configure Store Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configure Store Targets": {
+      "main": [
+        [
+          {
+            "node": "Fetch Shopify 1-Star Reviews",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch WooCommerce 1-Star RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Shopify 1-Star Reviews": {
+      "main": [
+        [
+          {
+            "node": "Wait For Both Store Feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch WooCommerce 1-Star RSS": {
+      "main": [
+        [
+          {
+            "node": "Wait For Both Store Feeds",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Wait For Both Store Feeds": {
+      "main": [
+        [
+          {
+            "node": "Parse & Tag 1-Star Churn Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "felipfr-ecom-shopify-woo-churn"
+  },
+  "tags": [
+    {
+      "name": "e-commerce"
+    },
+    {
+      "name": "shopify"
+    },
+    {
+      "name": "woocommerce"
+    }
+  ]
+}
